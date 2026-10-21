@@ -113,6 +113,7 @@ const T_STATS: usize = 18;
 const T_GAME: usize = 19;
 const T_WATER: usize = 20;
 const T_EYES: usize = 21;
+const T_NOTIFICATION: usize = 22;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
@@ -125,6 +126,7 @@ pub enum Page {
     Game,
     Stats,
     Power,
+    Notifications,
 }
 
 pub const PAGES: [Page; 9] = [
@@ -137,6 +139,7 @@ pub const PAGES: [Page; 9] = [
     Page::Apps,
     Page::Game,
     Page::Power,
+    Page::Notifications,
 ];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -188,6 +191,8 @@ pub enum Act {
     TodoToggle(usize),
     TodoDel(usize),
     TodoAdd,
+    NotificationSelect(usize),
+    NotificationClear,
     /// Shelf tab: press on the n-th file (click opens it, dragging takes it out) / remove it / remove all
     ShelfItem(usize),
     ShelfDel(usize),
@@ -370,6 +375,13 @@ pub struct App {
     confetti_start: Option<Instant>,
     /// what the pill says while it pulses ("Time's up", "Drink water")
     pub alert_msg: &'static str,
+    /// Most recently received Windows notification, shown briefly in the pill.
+    pub notification: Option<crate::notifications::Notification>,
+    /// In-memory notification history, newest first; discarded when Nock exits.
+    pub notifications: Vec<crate::notifications::Notification>,
+    /// Selected history entry, if any.
+    pub notification_selected: Option<usize>,
+    pub notification_scroll: usize,
     pub hub: crate::games::Hub,
     /// Apps tab picker: open?, the installed apps (None while loading), search text, scroll
     pub picking: bool,
@@ -531,6 +543,10 @@ impl App {
             beat_start: None,
             confetti_start: None,
             alert_msg: "Time's up",
+            notification: None,
+            notifications: Vec::new(),
+            notification_selected: None,
+            notification_scroll: 0,
             hub: crate::games::Hub::new(store::load_bests()),
             picking: false,
             app_list: None,
@@ -911,6 +927,7 @@ impl App {
             T_GAME => self.on_game_tick(),
             T_WATER => self.water_reminder(),
             T_EYES => self.eye_reminder(),
+            T_NOTIFICATION => { self.kill_timer(T_NOTIFICATION); self.notification = None; self.render(); },
             T_STATS => self.on_stats_tick(),
             T_FSCHK => {
                 self.kill_timer(T_FSCHK);
@@ -1497,6 +1514,13 @@ impl App {
             self.app_scroll = if delta < 0 { (self.app_scroll + 1).min(max) } else { self.app_scroll.saturating_sub(1) };
             self.ensure_picker_icons();
             self.render();
+        } else if self.page == Page::Notifications {
+            let max = self.notifications.len().saturating_sub(5);
+            self.notification_scroll = if delta < 0 { (self.notification_scroll + 1).min(max) } else { self.notification_scroll.saturating_sub(1) };
+            if let Some(i) = self.notification_selected {
+                self.notification_selected = Some(i.clamp(self.notification_scroll, self.notification_scroll + 4).min(self.notifications.len().saturating_sub(1)));
+            }
+            self.render();
         } else if self.page == Page::Clipboard {
             let max = self.clip_view().len().saturating_sub(CLIP_ROWS);
             if delta < 0 {
@@ -1541,6 +1565,15 @@ impl App {
             }
             Act::Pin => self.pinned = !self.pinned,
             Act::Tab(p) => self.select_page(p),
+            Act::NotificationSelect(i) => {
+                if i < self.notifications.len() { self.notification_selected = Some(i); self.render(); }
+            }
+            Act::NotificationClear => {
+                self.notifications.clear();
+                self.notification_selected = None;
+                self.notification_scroll = 0;
+                self.render();
+            }
             Act::Prev => {
                 self.begin_skip(false);
                 let _ = self.media.tx.send(Cmd::Prev);
@@ -2016,11 +2049,24 @@ impl App {
 
     // ------------------------------------------------------------- events ---
 
+    pub fn on_notification(&mut self) {
+        if let Some(n) = crate::notifications::take_latest() {
+            self.notifications.insert(0, n.clone());
+            self.notifications.truncate(100);
     /// Previous / Next was pressed: remember the current track so the panel can show
     /// "loading" over it until the new one arrives.
     fn begin_skip(&mut self, next: bool) {
         if self.mstate.has_track() {
+            self.notification_selected = Some(0);
             self.skip = Some(Skip { t0: Instant::now(), next, snap: self.mstate.clone(), art: self.art.clone() });
+            self.notification_scroll = 0;
+            self.notification = Some(n);
+            self.set_timer(T_NOTIFICATION, 6500);
+            if !self.hidden && !self.expanded { self.render(); }
+            if self.anim_ms == 0 { self.render(); }
+        }
+    }
+
             self.spin_t = 0.0;
             self.retarget();
         }

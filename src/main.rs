@@ -14,6 +14,7 @@ mod shelf;
 mod gfx;
 mod pop;
 mod media;
+mod notifications;
 mod radio;
 mod store;
 mod sys;
@@ -104,6 +105,7 @@ fn main() -> Result<()> {
 
         let boxed = Box::new(App::new(hwnd, sys::scale_of(sys::pick_monitor(store::load_config().monitor)))?);
         APP.store(Box::into_raw(boxed), Ordering::SeqCst);
+        notifications::start(hwnd.0 as isize);
         shelf::register(hwnd);
 
         // top bar window (same class; messages are routed by handle in wndproc)
@@ -344,6 +346,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         m if m == app::WM_FRAME => a.on_frame(),
         m if m == media::WM_MEDIA => a.on_media(),
+        m if m == notifications::WM_NOTIFICATION => a.on_notification(),
         m if m == radio::WM_RADIO => a.on_radio(),
         m if m == radio::WM_BTDONE => a.on_bt_done(wp.0 != 0),
         m if m == sys::WM_POP => a.on_pop_data(),
