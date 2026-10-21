@@ -3,31 +3,59 @@
 //!   apps.txt    – pinned launcher entries, one per line:  Name|target|optional args
 //!   todos.txt   – the to-do list, one per line:           0|text   (1 = done)
 
+
 use std::fs;
 use std::path::PathBuf;
 
 pub fn data_dir() -> PathBuf {
-    #[cfg(windows)]
-    let base = std::env::var_os("APPDATA").map(PathBuf::from);
-    #[cfg(not(windows))]
+
+    let exe_path = std::env::current_exe().ok();
+
+    let is_portable = exe_path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map(|name| {
+            name.to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("portable")
+        })
+        .unwrap_or(false);
+	#[cfg(windows)]
+    let base = if is_portable {
+        exe_path
+            .as_ref()
+            .and_then(|path| path.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+    };
+
+    let d = base.join("Nock");
+	#[cfg(not(windows))]
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    let base = base.unwrap_or_else(|| PathBuf::from("."));
-    let d = base.join("Nock");
-    // Settings from earlier working names are carried over once.
+        // Settings from earlier working names are carried over once.
+
     if !d.exists() {
         for old in ["Islet", "Notch"] {
-            let o = base.join(old);
-            if o.exists() {
-                let _ = fs::rename(&o, &d);
-                break;
+            let old_dir = base.join(old);
+
+            if old_dir.is_dir() {
+                if fs::rename(&old_dir, &d).is_ok() {
+                    break;
+                }
             }
         }
     }
+
     let _ = fs::create_dir_all(&d);
     d
 }
+
 
 pub fn apps_path() -> PathBuf {
     data_dir().join("apps.txt")
