@@ -113,6 +113,13 @@ fn draw_collapsed(a: &App, w: f32, ca: f32) {
     let ch = a.col_h();
     let timer = a.timer_running();
 
+    if let Some(n) = &a.notification {
+        let label = if !n.title.is_empty() { format!("{}: {}", n.app, n.title) } else { n.app.clone() };
+        g.icon('\u{E715}', Rect::new(12.0, 0.0, 20.0, ch), &f.icon14, T1.fade(ca));
+        g.text(&label, Rect::new(36.0, 0.0, (w - 44.0).max(100.0), ch), &f.small, T1.fade(ca), Align::Left);
+        return;
+    }
+
     if a.alerting() {
         let white = Color(1.0, 1.0, 1.0, ca);
         let amber = Color(1.0, 0.72, 0.2, ca);
@@ -281,12 +288,12 @@ fn draw_expanded(a: &App, ca: f32, hits: &mut Vec<Hit>) {
     hits.push(Hit { r: chev, act: Act::Collapse });
     g.icon('\u{E70E}', chev, &f.icon14, (if hot(a, Act::Collapse) { T1 } else { T3 }).fade(ca));
 
-    let labels = ["Media", "Controls", "Today", "Stats", "Clipboard", "Apps", "Games", "Power"];
+    let labels = ["Media", "Ctrl", "Today", "Stats", "Clip", "Apps", "Games", "Power", "Alerts"];
     // rough text width: narrow letters count less, so the gaps between tabs look even
     let text_w = |s: &str| -> f32 {
         s.chars().map(|c| match c { 'i' | 'l' | 't' | 'f' | 'j' | 'r' | 'I' => 3.4, 'm' | 'w' | 'M' | 'W' => 9.6, _ => 6.7 }).sum()
     };
-    let widths: Vec<f32> = labels.iter().map(|l| text_w(l) + 24.0).collect();
+    let widths: Vec<f32> = labels.iter().map(|l| text_w(l) + 16.0).collect();
     let total: f32 = widths.iter().sum();
     let (left, right) = (46.0, EXP_W - 46.0);
     let gap = ((right - left - total) / (labels.len() as f32 - 1.0)).clamp(2.0, 12.0);
@@ -317,6 +324,7 @@ fn draw_expanded(a: &App, ca: f32, hits: &mut Vec<Hit>) {
         Page::Tasks => page_tasks(a, ca, hits),
         Page::Stats => page_stats(a, ca),
         Page::Power => page_power(a, ca, hits),
+        Page::Notifications => page_notifications(a, ca, hits),
         Page::Game => {
             let (ox, oy) = ((EXP_W - crate::game::W) / 2.0, 14.0);
             if a.hub.is_playing() {
@@ -337,6 +345,66 @@ fn draw_expanded(a: &App, ca: f32, hits: &mut Vec<Hit>) {
     });
     for h in &mut hits[start..] {
         h.r.y += CONTENT_Y;
+    }
+}
+
+// ---------------------------------------------------------- notifications ----
+
+/// In-memory notification history page. Newest entries appear first.
+fn page_notifications(a: &App, ca: f32, hits: &mut Vec<Hit>) {
+    let g = &a.gfx;
+    let f = &g.fonts;
+    g.text("Notifications", Rect::new(22.0, 8.0, 300.0, 24.0), &f.title, T1.fade(ca), Align::Left);
+
+    let clear = Rect::new(EXP_W - 108.0, 8.0, 82.0, 24.0);
+    hits.push(Hit { r: clear, act: Act::NotificationClear });
+    g.fill_rrect(clear, 12.0, (if hot(a, Act::NotificationClear) { HOVER } else { SURF }).fade(ca));
+    g.text("Clear all", clear, &f.tiny, T2.fade(ca), Align::Center);
+
+    if a.notifications.is_empty() {
+        g.icon('\u{E715}', Rect::new(EXP_W / 2.0 - 16.0, 72.0, 32.0, 32.0), &f.icon18, T3.fade(ca));
+        g.text("No notifications yet", Rect::new(30.0, 112.0, EXP_W - 60.0, 22.0), &f.body, T2.fade(ca), Align::Center);
+        g.text("Windows notifications will appear here", Rect::new(30.0, 137.0, EXP_W - 60.0, 18.0), &f.small, T3.fade(ca), Align::Center);
+        return;
+    }
+
+    let selected = a.notification_selected.unwrap_or(a.notification_scroll).min(a.notifications.len() - 1);
+    let list_w = 250.0;
+    let list_x = 18.0;
+    let row_h = 34.0;
+    let visible = 5usize.min(a.notifications.len().saturating_sub(a.notification_scroll));
+    for row in 0..visible {
+        let i = a.notification_scroll + row;
+        let n = &a.notifications[i];
+        let r = Rect::new(list_x, 40.0 + row as f32 * row_h, list_w, row_h - 3.0);
+        let act = Act::NotificationSelect(i);
+        hits.push(Hit { r, act });
+        if i == selected {
+            g.fill_rrect(r, 8.0, a.accent.fade(0.20 * ca));
+        } else if hot(a, act) {
+            g.fill_rrect(r, 8.0, HOVER.fade(ca));
+        }
+        let app = n.app.rsplit('!').next().unwrap_or(&n.app);
+        let title = if n.title.trim().is_empty() { &n.body } else { &n.title };
+        g.text(app, Rect::new(r.x + 8.0, r.y + 2.0, r.w - 16.0, 12.0), &f.tiny, T3.fade(ca), Align::Left);
+        g.text(title, Rect::new(r.x + 8.0, r.y + 14.0, r.w - 16.0, 15.0), &f.small, (if i == selected { T1 } else { T2 }).fade(ca), Align::Left);
+    }
+    if a.notifications.len() > 5 {
+        g.text(&format!("{} notifications · scroll for more", a.notifications.len()), Rect::new(list_x + 4.0, 40.0 + 5.0 * row_h, list_w - 8.0, 16.0), &f.tiny, T3.fade(ca), Align::Left);
+    }
+
+    let detail_x = 284.0;
+    let detail = Rect::new(detail_x, 40.0, EXP_W - detail_x - 18.0, 164.0);
+    g.fill_rrect(detail, 12.0, SURF.fade(ca));
+    g.stroke_rrect(detail, 12.0, Color::white(0.10 * ca), 1.0);
+    if let Some(n) = a.notifications.get(selected) {
+        let app = n.app.rsplit('!').next().unwrap_or(&n.app);
+        g.text(app, Rect::new(detail.x + 12.0, detail.y + 10.0, detail.w - 24.0, 17.0), &f.small, T2.fade(ca), Align::Left);
+        let title = if n.title.trim().is_empty() { "Notification" } else { &n.title };
+        g.text(title, Rect::new(detail.x + 12.0, detail.y + 32.0, detail.w - 24.0, 32.0), &f.body, T1.fade(ca), Align::Left);
+        if !n.body.trim().is_empty() {
+            g.text(&n.body, Rect::new(detail.x + 12.0, detail.y + 69.0, detail.w - 24.0, 78.0), &f.small, T2.fade(ca), Align::Left);
+        }
     }
 }
 
