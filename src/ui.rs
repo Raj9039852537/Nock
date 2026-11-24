@@ -4,6 +4,7 @@
 
 use crate::app::*;
 use crate::gfx::*;
+use crate::store::{clip_kind_of, preview, ClipKind};
 use crate::sys;
 
 const BLACK: Color = Color(0.0, 0.0, 0.0, 1.0);
@@ -236,10 +237,109 @@ fn draw_collapsed(a: &App, w: f32, ca: f32) {
         let (_, _, day, wday, ..) = sys::local_time();
         // date | time, centred as a pair; the time is the bold part
         let (dw, tw) = (50.0, if a.cfg.clock_24h { 44.0 } else { 70.0 });
-        let x0 = (w - (dw + 15.0 + tw)) / 2.0;
+        let glance = a.glance();
+        let gw = glance.as_ref().map_or(0.0, |(_, gw)| gw + 16.0);
+        let x0 = (w - (dw + 15.0 + tw + gw)) / 2.0;
         g.text(&format!("{} {}", DAYS[(wday as usize).min(6)], day), Rect::new(x0, 0.0, dw, ch), &f.small, T3.fade(ca), Align::Right);
         g.fill_rrect(Rect::new(x0 + dw + 7.0, ch / 2.0 - 7.0, 1.0, 14.0), 0.5, Color::white(0.18 * ca));
         g.text(&label, Rect::new(x0 + dw + 15.0, 0.0, tw, ch), &f.menu, T1.fade(ca), Align::Left);
+        if let Some((txt, gwid)) = glance {
+            // optional glance: separator, then secondary-colour text (tasks get a small checkbox)
+            let sx = x0 + dw + 15.0 + tw + 7.0;
+            g.fill_rrect(Rect::new(sx, ch / 2.0 - 7.0, 1.0, 14.0), 0.5, Color::white(0.18 * ca));
+            let mut gx = sx + 9.0;
+            let kind = a.glance_kind();
+            if kind == 1 {
+                g.icon('\u{E73A}', Rect::new(gx, 0.0, 16.0, ch), &f.icon14, T2.fade(ca));
+                gx += 19.0;
+            }
+            // the next meeting is dimmer than the other glances
+            let gcol = if kind == 4 { Color(0.55, 0.53, 0.49, ca) } else { T2.fade(ca) };
+            g.text(&txt, Rect::new(gx, 0.0, gwid, ch), &f.small, gcol, Align::Left);
+        }
+        if a.cycle_dots() {
+            // page dots while cycling: the active page in blue, the others grey
+            let active = a.cycle as usize % 4;
+            for i in 0..4 {
+                let c = if i == active { Color(DEFAULT_ACCENT.0, DEFAULT_ACCENT.1, DEFAULT_ACCENT.2, ca) } else { Color(0.267, 0.267, 0.267, ca) };
+                g.fill_circle(w / 2.0 - 12.0 + i as f32 * 8.0, ch - 4.0, 2.0, c);
+            }
+        } else if a.cfg.day_line {
+            let (_, _, _, _, hh, mm, _, _) = sys::local_time();
+            if let Some(frac) = crate::app::day_fraction(hh, mm, a.cfg.day_start, a.cfg.day_end) {
+                let (x, len, y) = (14.0, (w - 28.0).max(1.0), ch - 5.0);
+                g.fill_rrect(Rect::new(x, y, len, 2.0), 1.0, Color(0.15, 0.15, 0.165, ca));
+                g.fill_rrect(Rect::new(x, y, (len * frac).max(2.0), 2.0), 1.0, Color(0.55, 0.53, 0.49, ca));
+            }
+        }
+    }
+
+    if timer && a.cfg.idle_focus_bar {
+        draw_focus_line(a, w, ch, ca);
+    }
+    if a.cfg.state_dot && !m.has_track() {
+        draw_state_dot(a, ch, ca);
+    }
+    if let Some(k) = a.peek_k() {
+        use crate::buddy::BuddyKind;
+        if let Some(kind @ (BuddyKind::Robot | BuddyKind::Cat)) = BuddyKind::from_id(a.cfg.buddy) {
+            crate::buddy::draw_peek(g, kind, w - 26.0, ch, k, a.peek_t());
+        }
+    }
+}
+
+/// The state glyph at the left of the idle and timer notch. Shape differs by state, not just colour.
+fn draw_state_dot(a: &App, ch: f32, ca: f32) {
+    let g = &a.gfx;
+    let (cx, cy) = (13.0, ch / 2.0);
+    let blue = Color(DEFAULT_ACCENT.0, DEFAULT_ACCENT.1, DEFAULT_ACCENT.2, ca);
+    match a.dot_state() {
+        DotState::Idle => g.fill_circle(cx, cy, 3.0, blue),
+        DotState::Mic | DotState::MicMuted => {
+            let c = if a.dot_state() == DotState::MicMuted { Color(1.0, 0.3, 0.3, ca) } else { blue };
+            g.fill_circle(cx, cy, 4.2, c);
+            g.fill_circle(cx, cy, 2.6, BLACK);
+        }
+        DotState::Battery => {
+            let amber = Color(1.0, 0.72, 0.2, ca);
+            g.fill_rrect(Rect::new(cx - 4.0, cy - 4.0, 8.0, 8.0), 1.8, amber);
+            g.fill_rrect(Rect::new(cx - 0.55, cy - 2.6, 1.1, 3.2), 0.5, BLACK);
+            g.fill_circle(cx, cy + 2.0, 0.6, BLACK);
+        }
+        DotState::Focus => {
+            let done = focus_fraction(a.timer_total_s, a.timer_remaining_ms());
+            let col = if a.break_mode { Color(0.12, 0.72, 0.62, ca) } else { blue };
+            let steps = 28;
+            let pt = |i: usize| {
+                let ang = -std::f32::consts::FRAC_PI_2 + i as f32 / steps as f32 * std::f32::consts::TAU;
+                (cx + 4.4 * ang.cos(), cy + 4.4 * ang.sin())
+            };
+            for i in 0..steps {
+                g.line(pt(i), pt(i + 1), 1.6, Color(0.2, 0.2, 0.22, ca));
+            }
+            for i in 0..((done * steps as f32).round() as usize).min(steps) {
+                g.line(pt(i), pt(i + 1), 1.8, col);
+            }
+        }
+    }
+}
+
+/// How much of a timer session has passed, 0 to 1.
+pub fn focus_fraction(total_s: u32, remaining_ms: i64) -> f32 {
+    let total = (total_s as f32 * 1000.0).max(1.0);
+    (1.0 - remaining_ms as f32 / total).clamp(0.0, 1.0)
+}
+
+/// A 2 px line along the inside bottom edge of the pill: how much of the focus session has passed.
+fn draw_focus_line(a: &App, w: f32, ch: f32, ca: f32) {
+    let g = &a.gfx;
+    let done = focus_fraction(a.timer_total_s, a.timer_remaining_ms());
+    let (x, len, y) = (14.0, (w - 28.0).max(1.0), ch - 5.0);
+    g.fill_rrect(Rect::new(x, y, len, 2.0), 1.0, Color(0.15, 0.15, 0.165, ca));
+    if done > 0.0 {
+        // the existing blue; breaks use the teal of the break nudge
+        let c = if a.break_mode { Color(0.12, 0.72, 0.62, ca) } else { Color(DEFAULT_ACCENT.0, DEFAULT_ACCENT.1, DEFAULT_ACCENT.2, ca) };
+        g.fill_rrect(Rect::new(x, y, (len * done).max(2.0), 2.0), 1.0, c);
     }
 }
 
@@ -772,27 +872,12 @@ const C_PINK: Color = Color(1.0, 0.50, 0.62, 1.0);
 
 /// What kind of thing was copied: an icon and a colour for its row.
 fn clip_kind(s: &str) -> (char, Color) {
-    let t = s.trim();
-    let lower = t.to_ascii_lowercase();
-    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("www.") {
-        ('\u{E71B}', C_CPU)
-    } else if t.contains('@') && !t.contains(' ') && t.contains('.') {
-        ('\u{E715}', C_BAT)
-    } else if t.contains(":\\") || t.starts_with("\\\\") || t.starts_with('/') || t.starts_with("~/") {
-        ('\u{E8B7}', C_MEM)
-    } else if t.contains(" --") || t.contains("();") || t.contains("=>") || t.contains('{') || t.contains("::") || t.starts_with("cargo ") || t.starts_with("git ") {
-        ('\u{E943}', C_PINK)
-    } else {
-        ('\u{E8A5}', C_UP)
-    }
-}
-
-fn preview(s: &str) -> String {
-    let one: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if one.chars().count() > 160 {
-        one.chars().take(160).collect()
-    } else {
-        one
+    match clip_kind_of(s) {
+        ClipKind::Link => ('\u{E71B}', C_CPU),
+        ClipKind::Mail => ('\u{E715}', C_BAT),
+        ClipKind::Path => ('\u{E8B7}', C_MEM),
+        ClipKind::Code => ('\u{E943}', C_PINK),
+        ClipKind::Text => ('\u{E8A5}', C_UP),
     }
 }
 
@@ -997,22 +1082,6 @@ fn page_app_picker(a: &App, ca: f32, hits: &mut Vec<Hit>) {
         let y = track.y + (track.h - hgt) * a.app_scroll as f32 / (view.len() - PICK_ROWS) as f32;
         g.fill_rrect(Rect::new(track.x, y, 3.0, hgt), 1.5, Color::white(0.3 * ca));
     }
-}
-
-fn name_color(name: &str) -> Color {
-    let mut h: u32 = 2166136261;
-    for b in name.bytes() {
-        h = (h ^ b as u32).wrapping_mul(16777619);
-    }
-    const P: [Color; 6] = [
-        Color::rgb(0xFF, 0xB4, 0x6B),
-        Color::rgb(0x8F, 0xD3, 0xFF),
-        Color::rgb(0xB9, 0xA4, 0xFF),
-        Color::rgb(0x9B, 0xE8, 0xA8),
-        Color::rgb(0xFF, 0x9E, 0xB8),
-        Color::rgb(0xF2, 0xE0, 0x7A),
-    ];
-    P[(h % 6) as usize]
 }
 
 // ----------------------------------------------------------------- tasks ----
@@ -1301,31 +1370,7 @@ fn draw_calendar(a: &App, ca: f32) {
     }
 }
 
-/// Weekday (0 = Sunday) of the 1st of the month, given today's day and weekday.
-pub(crate) fn first_weekday(day: u32, wday: u32) -> u32 {
-    (wday + 7 - (day - 1) % 7) % 7
-}
-
-/// Weekday (0 = Sunday) of the 1st of any month.
-pub(crate) fn first_of_month(y: i32, m: u32) -> u32 {
-    const T: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
-    let y = if m < 3 { y - 1 } else { y };
-    ((y + y / 4 - y / 100 + y / 400 + T[(m as usize - 1) % 12] + 1).rem_euclid(7)) as u32
-}
-
-pub(crate) fn days_in_month(y: i32, m: u32) -> u32 {
-    match m {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        _ => {
-            if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
-                29
-            } else {
-                28
-            }
-        }
-    }
-}
+pub(crate) use crate::cal::{days_in_month, first_of_month, first_weekday};
 
 // --------------------------------------------------------------- helpers ----
 
@@ -1355,50 +1400,19 @@ fn slider(
     }
 }
 
-pub fn fmt_time(secs: f64) -> String {
-    let s = secs.max(0.0) as i64;
-    if s >= 3600 {
-        format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
-    } else {
-        format!("{}:{:02}", s / 60, s % 60)
-    }
-}
+pub use crate::cal::fmt_time;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn time_format() {
-        assert_eq!(fmt_time(0.0), "0:00");
-        assert_eq!(fmt_time(65.4), "1:05");
-        assert_eq!(fmt_time(3725.0), "1:02:05");
-        assert_eq!(fmt_time(-5.0), "0:00");
-    }
-
-    #[test]
-    fn month_lengths() {
-        assert_eq!(days_in_month(2026, 2), 28);
-        assert_eq!(days_in_month(2028, 2), 29);
-        assert_eq!(days_in_month(1900, 2), 28);
-        assert_eq!(days_in_month(2000, 2), 29);
-        assert_eq!(days_in_month(2026, 10), 31);
-        assert_eq!(days_in_month(2026, 11), 30);
-    }
-
-    #[test]
-    fn first_of_month_weekday() {
-        // Thu 15 Oct 2026 -> 1 Oct 2026 was a Thursday (4)
-        assert_eq!(first_weekday(15, 4), 4);
-        // Sun 1 Nov 2026 -> itself
-        assert_eq!(first_weekday(1, 0), 0);
-        // Fri 30 Oct 2026 (5): 1st is 29 days earlier -> Thursday (4)
-        assert_eq!(first_weekday(30, 5), 4);
-        // any month: Oct 2026 Thu, Nov 2026 Sun, Feb 2024 Thu, Jan 2000 Sat
-        assert_eq!(first_of_month(2026, 10), 4);
-        assert_eq!(first_of_month(2026, 11), 0);
-        assert_eq!(first_of_month(2024, 2), 4);
-        assert_eq!(first_of_month(2000, 1), 6);
+    fn focus_fraction_is_clamped() {
+        assert_eq!(focus_fraction(1500, 1_500_000), 0.0);
+        assert!((focus_fraction(1500, 750_000) - 0.5).abs() < 1e-6);
+        assert_eq!(focus_fraction(1500, 0), 1.0);
+        assert_eq!(focus_fraction(1500, -5), 1.0);
+        assert_eq!(focus_fraction(0, 0), 1.0);
     }
 
     #[test]

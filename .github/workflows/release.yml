@@ -14,16 +14,69 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      # Signing is skipped until the SignPath secret exists, so releases keep working.
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
+
+      # Sign nock.exe first, so the installer packages the signed copy.
+      - name: Upload unsigned nock.exe
+        if: env.SIGNPATH_API_TOKEN != ''
+        id: unsigned-exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: nock-exe-unsigned
+          path: target/release/nock.exe
+      - name: Sign nock.exe (SignPath)
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: Nock
+          signing-policy-slug: test-signing
+          artifact-configuration-slug: initial
+          github-artifact-id: ${{ steps.unsigned-exe.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/exe
+      - name: Use signed nock.exe
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: Copy-Item signed\exe\nock.exe target\release\nock.exe -Force
+
       - name: Build installer
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
           $v = "${{ github.ref_name }}".TrimStart('v')
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" installer\nock.iss
+      - name: Upload unsigned installer
+        if: env.SIGNPATH_API_TOKEN != ''
+        id: unsigned-setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: nock-setup-unsigned
+          path: installer/Output/NockSetup-*.exe
+      - name: Sign installer (SignPath)
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: Nock
+          signing-policy-slug: test-signing
+          artifact-configuration-slug: initial
+          github-artifact-id: ${{ steps.unsigned-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/setup
+      - name: Use signed installer
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: Copy-Item signed\setup\NockSetup-*.exe installer\Output\ -Force
+
       - name: Name the no-install version clearly
         shell: pwsh
         run: |
@@ -51,4 +104,22 @@ jobs:
             **Most people: download `NockSetup-...exe` (the installer).** It adds Nock to the Start menu, can start with Windows, and updates itself from the tray menu.
 
             **Don't want to install? Use `Nock-portable-...exe`.** Put it in a folder you'll keep and run it. No Start menu entry beyond the one Nock adds itself, and it can update itself from the tray menu too.
+
+            **Linux (preview): use `nock_...amd64.deb` or `nock-...-x86_64-linux.tar.gz`.** Needs an X11 session (or XWayland) and the DejaVu Sans font. The `.deb` installs with `sudo apt install ./nock_...amd64.deb`; the tarball installs for your user with `./install.sh`. It is a preview, with fewer features and far less testing than the Windows version. See the README for what is missing.
           generate_release_notes: true
+
+  # Linux preview packages join the release the Windows job created.
+  linux:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+      - name: Build packages
+        run: packaging/linux/package.sh "${{ github.ref_name }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packaging/linux/out/nock_*_amd64.deb
+            packaging/linux/out/nock-*-x86_64-linux.tar.gz

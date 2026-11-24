@@ -7,9 +7,13 @@ use std::fs;
 use std::path::PathBuf;
 
 pub fn data_dir() -> PathBuf {
-    let base = std::env::var_os("APPDATA")
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA").map(PathBuf::from);
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    let base = base.unwrap_or_else(|| PathBuf::from("."));
     let d = base.join("Nock");
     // Settings from earlier working names are carried over once.
     if !d.exists() {
@@ -62,6 +66,23 @@ pub struct Config {
     pub smart: bool,
     /// A short chime with the important hints (meeting, low battery, break).
     pub smart_sound: bool,
+    /// Optional extra beside the idle clock: 0 off, 1 tasks left, 2 focus minutes today, 3 CPU and RAM, 4 next meeting.
+    pub idle_glance: u8,
+    /// A thin progress line along the bottom of the notch while a focus session runs.
+    pub idle_focus_bar: bool,
+    /// Next-meeting glance shows meetings starting within this many hours (1 to 12).
+    pub idle_meeting_hours: u8,
+    /// A thin line along the bottom of the idle pill: how much of the workday has passed.
+    pub day_line: bool,
+    /// Workday for the day line, in whole hours (0 to 24).
+    pub day_start: u8,
+    pub day_end: u8,
+    /// Scroll up over the idle pill cycles: time only, date, tasks left, focus today.
+    pub idle_cycle: bool,
+    /// A state glyph on the idle and timer notch: dot, ring (mic), amber square (battery), arc (focus).
+    pub state_dot: bool,
+    /// Now and then the buddy peeks over the bottom edge of the notch for a moment.
+    pub peek: bool,
     /// Read-only ICS link (Google / Outlook) for "meeting in 5 min" hints; empty = off.
     pub calendar_url: String,
     /// A Start Menu shortcut so Windows search finds Nock.
@@ -85,7 +106,7 @@ eq_animation=1
 clock_24h=0
 reserve_space=0
 top_bar=1
-# buddy: 0 = off, 1 = blob, 2 = cat, 3 = bunny, 4 = hero, 5 = robot, 6 = ronin, 7 = courier, 8 = necromancer
+# buddy: 0 = off, 2 = cat, 5 = robot, 6 = ronin, 7 = courier, 8 = necromancer (1, 3 and 4 were retired and now give the robot)
 buddy=5
 # fight scenes now and then (needs a buddy): 1 = on
 scenes=1
@@ -119,6 +140,23 @@ calendar_url=
 smart_sound=0
 # display for the notch and bar: 0 = primary, 2 = second display, and so on
 monitor=0
+# extra beside the idle clock: 0 = off, 1 = tasks left, 2 = focus minutes today, 3 = CPU and RAM, 4 = next meeting
+idle_glance=0
+# progress line on the notch while a focus session runs: 1 = on
+idle_focus_bar=1
+# next meeting glance (idle_glance=4) shows meetings starting within this many hours (1 to 12)
+idle_meeting_hours=3
+# thin line along the bottom of the idle notch: how much of your workday has passed: 1 = on
+day_line=0
+# workday for the day line, in hours (0 to 24)
+day_start=9
+day_end=18
+# scroll up over the idle notch cycles time, date, tasks left and focus today: 1 = on
+idle_cycle=0
+# a state glyph on the notch: dot, ring (mic in use), amber square (battery low), arc (focus session): 1 = on
+state_dot=0
+# now and then the buddy peeks over the bottom edge of the notch (robot and kitty): 1 = on
+peek=0
 ";
 
 pub fn load_config() -> Config {
@@ -151,6 +189,15 @@ pub fn load_config() -> Config {
         auto_close: true,
         smart: true,
         smart_sound: false,
+        idle_glance: 0,
+        idle_focus_bar: true,
+        idle_meeting_hours: 3,
+        day_line: false,
+        day_start: 9,
+        day_end: 18,
+        idle_cycle: false,
+        state_dot: false,
+        peek: false,
         calendar_url: String::new(),
         monitor: 0,
     };
@@ -177,20 +224,34 @@ pub fn load_config() -> Config {
                 "auto_close" => cfg.auto_close = on,
                 "smart" => cfg.smart = on,
                 "smart_sound" => cfg.smart_sound = on,
+                "idle_glance" => cfg.idle_glance = v.trim().parse::<u8>().unwrap_or(0).min(4),
+                "idle_focus_bar" => cfg.idle_focus_bar = on,
+                "idle_meeting_hours" => cfg.idle_meeting_hours = v.trim().parse::<u8>().unwrap_or(3).clamp(1, 12),
+                "day_line" => cfg.day_line = on,
+                "day_start" => cfg.day_start = v.trim().parse::<u8>().unwrap_or(9).min(24),
+                "day_end" => cfg.day_end = v.trim().parse::<u8>().unwrap_or(18).min(24),
+                "idle_cycle" => cfg.idle_cycle = on,
+                "state_dot" => cfg.state_dot = on,
+                "peek" => cfg.peek = on,
                 "calendar_url" => cfg.calendar_url = v.trim().to_string(),
                 "eye_min" => cfg.eye_min = v.trim().parse::<u16>().unwrap_or(0).min(600),
                 "clock_style" => cfg.clock_style = v.trim().parse::<u8>().unwrap_or(0).min(3),
                 "water_min" => cfg.water_min = v.trim().parse::<u16>().unwrap_or(0).min(600),
                 "scene_min" => cfg.scene_min = v.trim().parse::<u8>().unwrap_or(5).clamp(1, 60),
                 "monitor" => cfg.monitor = v.trim().parse::<u8>().unwrap_or(0).min(16),
-                "buddy" => cfg.buddy = v.trim().parse::<u8>().ok().filter(|b| *b <= 8).unwrap_or(5),
+                "buddy" => cfg.buddy = match v.trim().parse::<u8>() {
+                    // retired blob, bunny and hero fall back to the robot
+                    Ok(1 | 3 | 4) => 5,
+                    Ok(b) if b <= 8 => b,
+                    _ => 5,
+                },
                 _ => {}
             }
         }
     }
     // A config file from an older version lacks the newer settings: write the
     // file back with every setting present (keeping the user's values).
-    let keys = ["hover_expand", "eq_animation", "clock_24h", "reserve_space", "top_bar", "buddy", "scenes", "scene_min", "stats", "clock_style", "water_min", "auto_break", "eye_min", "start_menu", "fs_hide", "auto_hide", "smart_hide", "auto_close", "smart", "calendar_url", "smart_sound", "monitor"];
+    let keys = ["hover_expand", "eq_animation", "clock_24h", "reserve_space", "top_bar", "buddy", "scenes", "scene_min", "stats", "clock_style", "water_min", "auto_break", "eye_min", "start_menu", "fs_hide", "auto_hide", "smart_hide", "auto_close", "smart", "calendar_url", "smart_sound", "monitor", "idle_glance", "idle_focus_bar", "idle_meeting_hours", "day_line", "day_start", "day_end", "idle_cycle", "state_dot", "peek"];
     let present = |k: &str| text.lines().any(|l| l.trim().split_once('=').map(|(a, _)| a.trim() == k).unwrap_or(false));
     if keys.iter().any(|k| !present(k)) {
         save_config(&cfg);
@@ -201,7 +262,7 @@ pub fn load_config() -> Config {
 pub fn save_config(c: &Config) {
     let b = |v: bool| if v { 1 } else { 0 };
     let text = format!(
-        "# Nock settings (1 = on, 0 = off)\nhover_expand={}\neq_animation={}\nclock_24h={}\nreserve_space={}\ntop_bar={}\n# buddy: 0 = off, 1 = blob, 2 = cat, 3 = bunny, 4 = hero, 5 = robot, 6 = ronin, 7 = courier, 8 = necromancer\nbuddy={}\n# fight scenes now and then (needs a buddy): 1 = on\nscenes={}\n# average minutes between scenes (1 to 60)\nscene_min={}\n# CPU and memory read-out on the top bar: 1 = on\nstats={}\n# top bar clock: 0 = digital, 1 = analog, 2 = binary, 3 = countdown to Friday\nclock_style={}\n# minutes between water reminders (0 = off)\nwater_min={}\n# after a focus session start a 5 minute break, then focus again: 1 = on\nauto_break={}\n# minutes between look-away reminders for your eyes (0 = off)\neye_min={}\n# a Start Menu shortcut so typing Nock in Windows search finds it: 1 = on\nstart_menu={}\n# hide the notch and bar while a full-screen app or game is in front: 1 = on\nfs_hide={}\n# keep the notch and bar hidden until the pointer touches the top edge: 1 = on\nauto_hide={}\n# fade the notch out while a window covers it, and back in when the window moves away: 1 = on\nsmart_hide={}\n# close the open panel when the pointer leaves it or another window comes to the front: 1 = on\nauto_close={}\n# smart notch hints (low battery, take a break after 90 min at the PC, link/code copied): 1 = on\nsmart={}\n# calendar link (Google: Settings > your calendar > Secret address in iCal format) for meeting hints; empty = off\ncalendar_url={}\n# a short chime with meeting, low battery and break hints: 1 = on\nsmart_sound={}\n# display for the notch and bar: 0 = primary, 2 = second display, and so on\nmonitor={}\n",
+        "# Nock settings (1 = on, 0 = off)\nhover_expand={}\neq_animation={}\nclock_24h={}\nreserve_space={}\ntop_bar={}\n# buddy: 0 = off, 2 = cat, 5 = robot, 6 = ronin, 7 = courier, 8 = necromancer (1, 3 and 4 were retired and now give the robot)\nbuddy={}\n# fight scenes now and then (needs a buddy): 1 = on\nscenes={}\n# average minutes between scenes (1 to 60)\nscene_min={}\n# CPU and memory read-out on the top bar: 1 = on\nstats={}\n# top bar clock: 0 = digital, 1 = analog, 2 = binary, 3 = countdown to Friday\nclock_style={}\n# minutes between water reminders (0 = off)\nwater_min={}\n# after a focus session start a 5 minute break, then focus again: 1 = on\nauto_break={}\n# minutes between look-away reminders for your eyes (0 = off)\neye_min={}\n# a Start Menu shortcut so typing Nock in Windows search finds it: 1 = on\nstart_menu={}\n# hide the notch and bar while a full-screen app or game is in front: 1 = on\nfs_hide={}\n# keep the notch and bar hidden until the pointer touches the top edge: 1 = on\nauto_hide={}\n# fade the notch out while a window covers it, and back in when the window moves away: 1 = on\nsmart_hide={}\n# close the open panel when the pointer leaves it or another window comes to the front: 1 = on\nauto_close={}\n# smart notch hints (low battery, take a break after 90 min at the PC, link/code copied): 1 = on\nsmart={}\n# calendar link (Google: Settings > your calendar > Secret address in iCal format) for meeting hints; empty = off\ncalendar_url={}\n# a short chime with meeting, low battery and break hints: 1 = on\nsmart_sound={}\n# display for the notch and bar: 0 = primary, 2 = second display, and so on\nmonitor={}\n# extra beside the idle clock: 0 = off, 1 = tasks left, 2 = focus minutes today, 3 = CPU and RAM, 4 = next meeting\nidle_glance={}\n# progress line on the notch while a focus session runs: 1 = on\nidle_focus_bar={}\n# next meeting glance (idle_glance=4) shows meetings starting within this many hours (1 to 12)\nidle_meeting_hours={}\n# thin line along the bottom of the idle notch: how much of your workday has passed: 1 = on\nday_line={}\n# workday for the day line, in hours (0 to 24)\nday_start={}\nday_end={}\n# scroll up over the idle notch cycles time, date, tasks left and focus today: 1 = on\nidle_cycle={}\n# a state glyph on the notch: dot, ring (mic in use), amber square (battery low), arc (focus session): 1 = on\nstate_dot={}\n# now and then the buddy peeks over the bottom edge of the notch (robot and kitty): 1 = on\npeek={}\n",
         b(c.hover_expand),
         b(c.eq_animation),
         b(c.clock_24h),
@@ -223,7 +284,16 @@ pub fn save_config(c: &Config) {
         b(c.smart),
         c.calendar_url,
         b(c.smart_sound),
-        c.monitor
+        c.monitor,
+        c.idle_glance,
+        b(c.idle_focus_bar),
+        c.idle_meeting_hours,
+        b(c.day_line),
+        c.day_start,
+        c.day_end,
+        b(c.idle_cycle),
+        b(c.state_dot),
+        b(c.peek)
     );
     let _ = fs::write(data_dir().join("config.ini"), text);
 }
@@ -237,6 +307,7 @@ pub struct AppEntry {
     pub args: String,
 }
 
+#[cfg(windows)]
 const DEFAULT_APPS: &str = "\
 # Pinned apps for the notch launcher. One per line:  Name|target|optional arguments
 # target can be an .exe name or path, a folder, a URL, or something like ms-settings:
@@ -246,6 +317,16 @@ Terminal|wt.exe
 Notepad|notepad.exe
 Calculator|calc.exe
 Settings|ms-settings:
+Browser|https://www.google.com
+";
+
+#[cfg(not(windows))]
+const DEFAULT_APPS: &str = "\
+# Pinned apps for the notch launcher. One per line:  Name|target|optional arguments
+# target can be a command, a .desktop file, a folder or a URL.
+# The first 12 entries are shown.
+Files|xdg-open|~
+Terminal|x-terminal-emulator
 Browser|https://www.google.com
 ";
 
@@ -287,6 +368,44 @@ pub fn load_apps() -> Vec<AppEntry> {
         })
         .take(12)
         .collect()
+}
+
+// --------------------------------------------------------------- clipboard
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClipKind {
+    Link,
+    Mail,
+    Path,
+    Code,
+    Text,
+}
+
+/// What kind of thing was copied.
+pub fn clip_kind_of(s: &str) -> ClipKind {
+    let t = s.trim();
+    let lower = t.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("www.") {
+        ClipKind::Link
+    } else if t.contains('@') && !t.contains(' ') && t.contains('.') {
+        ClipKind::Mail
+    } else if t.contains(":\\") || t.starts_with("\\\\") || t.starts_with('/') || t.starts_with("~/") {
+        ClipKind::Path
+    } else if t.contains(" --") || t.contains("();") || t.contains("=>") || t.contains('{') || t.contains("::") || t.starts_with("cargo ") || t.starts_with("git ") {
+        ClipKind::Code
+    } else {
+        ClipKind::Text
+    }
+}
+
+/// One-line preview of copied text (whitespace collapsed, capped).
+pub fn preview(s: &str) -> String {
+    let one: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() > 160 {
+        one.chars().take(160).collect()
+    } else {
+        one
+    }
 }
 
 // ------------------------------------------------------------------- todos
@@ -417,6 +536,20 @@ pub fn save_todos(todos: &[Todo]) {
         s.push('\n');
     }
     let _ = fs::write(data_dir().join("todos.txt"), s);
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::*;
+
+    #[test]
+    fn kinds() {
+        assert_eq!(clip_kind_of("https://example.com"), ClipKind::Link);
+        assert_eq!(clip_kind_of("a@b.co"), ClipKind::Mail);
+        assert_eq!(clip_kind_of("/usr/bin"), ClipKind::Path);
+        assert_eq!(clip_kind_of("cargo build --release"), ClipKind::Code);
+        assert_eq!(clip_kind_of("hello there"), ClipKind::Text);
+    }
 }
 
 #[cfg(test)]

@@ -442,17 +442,22 @@
 
   /* ---------- latest release: direct download links and version ---------- */
   function hrefs(rel) {
-    var setup = '', portable = '';
+    var setup = '', portable = '', deb = '', targz = '';
     (rel.assets || []).forEach(function (a) {
       if (/^NockSetup-.*\.exe$/i.test(a.name)) setup = a.browser_download_url;
       if (/^Nock-portable-.*\.exe$/i.test(a.name)) portable = a.browser_download_url;
+      if (/^nock_.*_amd64\.deb$/i.test(a.name)) deb = a.browser_download_url;
+      if (/^nock-.*-linux\.tar\.gz$/i.test(a.name)) targz = a.browser_download_url;
     });
     $$('[data-dl="setup"]').forEach(function (a) { if (setup) a.href = setup; });
     $$('[data-dl="portable"]').forEach(function (a) { if (portable) a.href = portable; });
+    // an older release has no Linux files: hide those buttons rather than link to nothing
+    $$('[data-dl="deb"]').forEach(function (a) { if (deb) a.href = deb; else a.style.display = 'none'; });
+    $$('[data-dl="targz"]').forEach(function (a) { if (targz) a.href = targz; else a.style.display = 'none'; });
     var v = rel.tag_name || '';
     if (v) {
-      $('#verLine').textContent = 'Latest: ' + v + '. Free, MIT licensed. Installer or one portable .exe.';
-      $('#verLine2').textContent = 'Latest: ' + v + '. Free. Windows 10/11. The installer adds a Start menu entry; the portable file is just the app.';
+      $('#verLine').textContent = 'Latest: ' + v + '. Free, MIT licensed. Windows installer or portable .exe, Linux .deb or tarball (preview).';
+      $('#verLine2').textContent = 'Latest: ' + v + '. Free. Windows 10/11. The installer adds a Start menu entry; the portable file is just the app. Linux is a preview for X11 or XWayland: fewer features, less tested.';
     }
   }
   try {

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nock: a notch for Windows</title>
-<meta name="description" content="A native notch and top bar for Windows, written in Rust. About 1 MB, about 0% CPU when idle, no Electron. Free and MIT licensed. The demo on this page is playable.">
+<meta name="description" content="A native notch and top bar for Windows (with a Linux preview), written in Rust. About 1 MB, about 0% CPU when idle, no Electron. Free and MIT licensed. The demo on this page is playable.">
 <meta property="og:title" content="Nock: a notch for Windows in 1 MB of Rust">
 <meta property="og:description" content="Tasks, a focus timer, music, clipboard history and system dropdowns in a native notch. No Electron. Try it right on the page.">
 <meta property="og:type" content="website">
@@ -245,12 +245,13 @@
     <div>
     <p class="lede">The notch above is live, so click it and try everything.</p>
     <div class="ctas">
-      <a class="btn" id="dlMain" href="https://github.com/Akhilesh-Varute/Nock/releases/latest" data-dl="setup"><svg class="icon" aria-hidden="true"><use href="#i-dl"/></svg>Download for Windows</a>
+      <a class="btn" id="dlMain" href="#get"><svg class="icon" aria-hidden="true"><use href="#i-dl"/></svg>Download for Windows &amp; Linux</a>
       <a class="btn alt" href="https://github.com/Akhilesh-Varute/Nock">Read the source<svg class="icon" aria-hidden="true"><use href="#i-up"/></svg></a>
     </div>
     <div class="proof" data-proof hidden></div>
-    <div class="ver" id="verLine">Free. MIT licensed. Installer or one portable .exe.</div>
-    <div class="note-os" id="osNote">Heads up: Nock is Windows 10/11 only for now. A Linux port is in progress. You can still poke the demo.</div>
+    <div class="ver" id="verLine">Free. MIT licensed. Windows installer or portable .exe, Linux .deb or tarball (preview).</div>
+    <a style="display:inline-block;margin-top:12px" href="https://www.producthunt.com/products/nock-2?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-nock-2" target="_blank" rel="noopener noreferrer"><img alt="Nock - A notch for Windows, in 1 MB of Rust | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1300649&theme=neutral"></a>
+    <div class="note-os" id="osNote">Heads up: Nock is built for Windows 10/11, with a <a href="#get">Linux preview</a>. On a Mac or phone you can still poke the demo.</div>
     </div>
     <div class="stickers" aria-hidden="true">
       <div class="sticker o s-ov" style="--r:-5deg; --d:0s">No Electron</div>
@@ -373,19 +374,23 @@
   <div class="wrap">
     <h2 class="reveal">Go on. It's 1&nbsp;MB.</h2>
     <div class="ctas reveal">
-      <a class="btn" href="https://github.com/Akhilesh-Varute/Nock/releases/latest" data-dl="setup"><svg class="icon" aria-hidden="true"><use href="#i-dl"/></svg>Installer</a>
-      <a class="btn alt" href="https://github.com/Akhilesh-Varute/Nock/releases/latest" data-dl="portable"><svg class="icon" aria-hidden="true"><use href="#i-dl"/></svg>Portable .exe</a>
+      <a class="btn" href="https://github.com/Akhilesh-Varute/Nock/releases/latest" data-dl="setup"><svg class="icon" aria-hidden="true"><use href="#i-dl"/></svg>Windows installer</a>
+      <a class="btn alt" href="https://github.com/Akhilesh-Varute/Nock/releases/latest" data-dl="portable"><svg class="icon" aria-hidden="true"><use href="#i-dl"/></svg>Windows portable .exe</a>
+    </div>
+    <div class="ctas reveal">
+      <a class="btn alt" href="https://github.com/Akhilesh-Varute/Nock/releases/latest" data-dl="deb"><svg class="icon" aria-hidden="true"><use href="#i-dl"/></svg>Linux .deb (preview)</a>
+      <a class="btn alt" href="https://github.com/Akhilesh-Varute/Nock/releases/latest" data-dl="targz"><svg class="icon" aria-hidden="true"><use href="#i-dl"/></svg>Linux .tar.gz (preview)</a>
     </div>
     <div class="proof" data-proof hidden></div>
-    <div class="ver" id="verLine2">Free. Windows 10/11. The installer adds a Start menu entry; the portable file is just the app.</div>
+    <div class="ver" id="verLine2">Free. Windows 10/11. The installer adds a Start menu entry; the portable file is just the app. Linux is a preview for X11 or XWayland: fewer features, less tested.</div>
   </div>
 </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <span>Made by <a href="https://akhileshvarute.me/">Akhilesh Varute</a>. MIT licensed.</span>
-    <span><a href="https://github.com/Akhilesh-Varute/Nock">Source</a> / <a href="https://github.com/Akhilesh-Varute/Nock/issues">Report a bug or idea</a> / <a href="https://github.com/Akhilesh-Varute/Nock/releases">All releases</a></span>
+    <span>Made by <a href="https://akhileshvarute.me/">Akhilesh Varute</a>. MIT licensed. Free code signing provided by <a href="https://signpath.io/">SignPath.io</a>, certificate by <a href="https://signpath.org/">SignPath Foundation</a>.</span>
+    <span><a href="https://github.com/Akhilesh-Varute/Nock">Source</a> / <a href="https://github.com/Akhilesh-Varute/Nock/issues">Report a bug or idea</a> / <a href="https://github.com/Akhilesh-Varute/Nock/releases">All releases</a> / <a href="https://www.producthunt.com/products/nock-2">Product Hunt</a> / <a href="https://youtu.be/rGcVKVOOf6A">Video</a></span>
   </div>
 </footer>
 
