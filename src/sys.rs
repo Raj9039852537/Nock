@@ -1673,25 +1673,19 @@ pub fn shell_icon(parse_name: &str) -> Option<HICON> {
 }
 
 /// Where the Start Menu shortcut lives (per user, so no admin rights are needed).
+/// Where the Start Menu shortcut lives (per user, so no admin rights are needed).
 fn start_menu_link() -> Option<std::path::PathBuf> {
-    let exe_path = std::env::current_exe().ok();
-	let is_portable = exe_path
-        .as_ref()
-        .and_then(|path| path.file_name())
-        .map(|name| {
-            name.to_string_lossy()
-                .to_ascii_lowercase()
-                .contains("portable")
-        })
-        .unwrap_or(false);
-	if !is_portable{
-		let base = std::env::var_os("APPDATA")?;
-		Some(std::path::PathBuf::from(base).join(r"Microsoft\Windows\Start Menu\Programs\Nock.lnk"))
-	} else {
-        None
+    if crate::store::is_portable() {
+        return None;
     }
-}
 
+    let base = std::env::var_os("APPDATA")?;
+
+    Some(
+        std::path::PathBuf::from(base)
+            .join(r"Microsoft\Windows\Start Menu\Programs\Nock.lnk")
+    )
+}
 /// Add (or remove) a Start Menu shortcut so typing "Nock" in Windows search finds it. A
 /// plain .exe is invisible to search; a shortcut in this folder is what makes an app
 /// "installed". Rewritten at every start so it follows the exe if it is moved.

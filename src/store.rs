@@ -7,21 +7,39 @@
 use std::fs;
 use std::path::PathBuf;
 
-pub fn data_dir() -> PathBuf {
 
-    let exe_path = std::env::current_exe().ok();
-
-    let is_portable = exe_path
-        .as_ref()
-        .and_then(|path| path.file_name())
-        .map(|name| {
+/// Whether this executable is running in portable mode.
+pub(crate) fn is_portable() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_name().map(|name| {
             name.to_string_lossy()
                 .to_ascii_lowercase()
                 .contains("portable")
-        })
-        .unwrap_or(false);
-	#[cfg(windows)]
-    let base = if is_portable {
+        }))
+        .unwrap_or(false)
+}
+
+/// Carry settings over from earlier working names, once.
+fn migrate_legacy_dir(base: &Path, destination: &Path) {
+    if destination.exists() {
+        return;
+    }
+
+    for old in ["Islet", "Notch"] {
+        let old_dir = base.join(old);
+
+        if old_dir.is_dir() && fs::rename(&old_dir, destination).is_ok() {
+            break;
+        }
+    }
+}
+
+pub fn data_dir() -> PathBuf {
+    let exe_path = std::env::current_exe().ok();
+
+    #[cfg(windows)]
+    let base = if is_portable() {
         exe_path
             .as_ref()
             .and_then(|path| path.parent())
@@ -33,28 +51,45 @@ pub fn data_dir() -> PathBuf {
             .unwrap_or_else(|| PathBuf::from("."))
     };
 
-    let d = base.join("Nock");
-	#[cfg(not(windows))]
+    #[cfg(not(windows))]
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-        // Settings from earlier working names are carried over once.
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| PathBuf::from(h).join(".local/share"))
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
 
-    if !d.exists() {
-        for old in ["Islet", "Notch"] {
-            let old_dir = base.join(old);
+    let d = base.join("Nock");
 
-            if old_dir.is_dir() {
-                if fs::rename(&old_dir, &d).is_ok() {
-                    break;
-                }
-            }
+    migrate_legacy_dir(&base, &d);
+
+    if fs::create_dir_all(&d).is_ok() {
+        return d;
+    }
+
+    // Portable installations may reside in read-only directories.
+    // Fall back to the normal per-user data directory on Windows.
+    #[cfg(windows)]
+    {
+        let fallback_base = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let fallback = fallback_base.join("Nock");
+
+        if fallback != d {
+            migrate_legacy_dir(&fallback_base, &fallback);
+            let _ = fs::create_dir_all(&fallback);
+            return fallback;
         }
     }
 
-    let _ = fs::create_dir_all(&d);
+    // Last resort: return the primary path even if creation failed.
+    // Individual persistence operations already handle I/O errors.
     d
 }
+
 
 
 pub fn apps_path() -> PathBuf {
