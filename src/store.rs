@@ -5,7 +5,7 @@
 
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 
 /// Whether this executable is running in portable mode.
